@@ -25,6 +25,11 @@
 static VALUE mUCL                        = Qundef;
 static VALUE eUCLError                   = Qundef;
 
+static int ucl_allowed_flags = UCL_PARSER_KEY_LOWERCASE |
+	                       UCL_PARSER_NO_TIME       |
+	                       UCL_PARSER_DISABLE_MACRO |
+	                       UCL_PARSER_NO_FILEVARS   ;
+
 
 VALUE
 _iterate_valid_ucl(ucl_object_t const *root, int flags)
@@ -130,11 +135,6 @@ ucl_s_set_flags(VALUE klass, VALUE val)
 static VALUE
 ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 {
-    static int allowed_flags = UCL_PARSER_KEY_LOWERCASE |
-	                       UCL_PARSER_NO_TIME       |
-	                       UCL_PARSER_DISABLE_MACRO |
-	                       UCL_PARSER_NO_FILEVARS   ;
-
     VALUE data, flags;
     rb_scan_args(argc, argv, "11", &data, &flags);
     if (NIL_P(flags)) flags = ucl_s_get_flags(mUCL);
@@ -142,7 +142,7 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
     rb_check_type(data,  T_STRING);
     rb_check_type(flags, T_FIXNUM);
 	
-    int c_flags = FIX2INT(flags) & allowed_flags;
+    int c_flags = FIX2INT(flags) & ucl_allowed_flags;
 
     struct ucl_parser *parser =
 	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
@@ -152,20 +152,16 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 			 RSTRING_LEN(data));
     
     if (ucl_parser_get_error(parser)) {
-	rb_raise(eUCLError, "%s", ucl_parser_get_error(parser));
+	const char *errormsg = ucl_parser_get_error(parser);
+	if (parser != NULL) { ucl_parser_free(parser); }
+	rb_raise(eUCLError, "%s", errormsg);
     }
 
     ucl_object_t *root = ucl_parser_get_object(parser);
+    VALUE         res  = _iterate_valid_ucl(root, FIX2INT(flags));
 
-    VALUE res = _iterate_valid_ucl(root, FIX2INT(flags));
-
-    if (parser != NULL) {
-	ucl_parser_free(parser);
-    }
-    
-    if (root != NULL) {
-	ucl_object_unref(root);
-    }
+    if (parser != NULL) { ucl_parser_free(parser); }
+    if (root   != NULL) { ucl_object_unref(root);  }
     
     return res;
 }
@@ -187,17 +183,31 @@ ucl_s_load_file(int argc, VALUE *argv, VALUE klass)
 {
     VALUE file, flags;
     rb_scan_args(argc, argv, "11", &file, &flags);
+    if (NIL_P(flags)) flags = ucl_s_get_flags(mUCL);
 
-    VALUE read_kwargs = rb_hash_new();
-    rb_hash_aset(read_kwargs, rb_id2sym(rb_intern("encoding")),
-		 rb_str_new_cstr("BINARY"));
+    rb_check_type(file,  T_STRING);
+    rb_check_type(flags, T_FIXNUM);
+	
+    int   c_flags = FIX2INT(flags) & ucl_allowed_flags;
+    char *c_file  = StringValueCStr(file);
+    
+    struct ucl_parser *parser =
+	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
+    ucl_parser_add_file(parser, c_file);
+    
+    if (ucl_parser_get_error(parser)) {
+	const char *errormsg = ucl_parser_get_error(parser);
+	if (parser != NULL) { ucl_parser_free(parser); }
+	rb_raise(eUCLError, "%s", errormsg);
+    }
 
-    VALUE read_args[] = { file, read_kwargs };
-    VALUE data = rb_funcallv_kw(rb_cFile, rb_intern("read"),
-				2, read_args, RB_PASS_KEYWORDS);
+    ucl_object_t *root = ucl_parser_get_object(parser);
+    VALUE         res  = _iterate_valid_ucl(root, FIX2INT(flags));
 
-    VALUE parse_args[] = { data, flags };
-    return ucl_s_parse(2, parse_args, klass);
+    if (parser != NULL) { ucl_parser_free(parser); }
+    if (root   != NULL) { ucl_object_unref(root);  }
+    
+    return res;
 }
 
 
