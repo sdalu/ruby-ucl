@@ -103,6 +103,20 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags)
     }
 }
 
+static VALUE
+ucl_s_get_flags(VALUE klass)
+{
+    return rb_iv_get(klass, "@flags");
+}
+
+
+static VALUE
+ucl_s_set_flags(VALUE klass, VALUE val)
+{
+    rb_check_type(val, T_FIXNUM);
+    rb_iv_set(klass, "@flags", val);
+    return val;
+}
 
 
 /**
@@ -123,7 +137,7 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 
     VALUE data, flags;
     rb_scan_args(argc, argv, "11", &data, &flags);
-    if (NIL_P(flags)) flags = INT2FIX(0);
+    if (NIL_P(flags)) flags = ucl_s_get_flags(mUCL);
 
     rb_check_type(data,  T_STRING);
     rb_check_type(flags, T_FIXNUM);
@@ -189,6 +203,8 @@ ucl_s_load_file(int argc, VALUE *argv, VALUE klass)
 
 
 
+
+
 void Init_ucl(void) {
     /* Main classes */
     mUCL      = rb_define_class("UCL", rb_cObject);
@@ -200,11 +216,15 @@ void Init_ucl(void) {
     rb_define_const(mUCL, "DISABLE_MACRO", INT2FIX(UCL_PARSER_DISABLE_MACRO));
     rb_define_const(mUCL, "NO_FILEVARS",   INT2FIX(UCL_PARSER_NO_FILEVARS  ));
     rb_define_const(mUCL, "KEY_SYMBOL",    INT2FIX(UCL_PARSER_KEY_SYMBOL   ));
-    
+
+    /* Variables */
+    ucl_s_set_flags(mUCL, INT2FIX(0));
+	
     /* Definitions */
     rb_define_singleton_method(mUCL, "load_file", ucl_s_load_file, -1);
     rb_define_singleton_method(mUCL, "parse",     ucl_s_parse,     -1);
-
+    rb_define_singleton_method(mUCL, "flags",     ucl_s_get_flags,  0);
+    rb_define_singleton_method(mUCL, "flags=",    ucl_s_set_flags,  1);
 }
 
 

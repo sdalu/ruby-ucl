@@ -6,6 +6,7 @@ Examples
 ========
 
 ~~~ruby
+UCL.flags = UCL::KEY_SYMBOL
 UCL.load_file('foo.conf', UCL::KEY_SYMBOL | KEY_LOWERCASE)
 UCL.parse(File.read('foo.conf'))
 ~~~
