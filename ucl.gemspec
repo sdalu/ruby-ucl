@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
     s.name        = 'ucl'
-    s.version     = '0.1.3'
+    s.version     = '0.1.3.1'
     s.summary     = " Universal configuration library parser"
     s.description =  <<~EOF
       
