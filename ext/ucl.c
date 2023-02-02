@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 /* Fake flag */
-#define UCL_PARSER_KEY_SYMBOL (1 << 10)
+#define UCL_PARSER_KEY_SYMBOL (1 << 12)
 
 
 /**
@@ -25,87 +25,83 @@
 static VALUE mUCL                        = Qundef;
 static VALUE eUCLError                   = Qundef;
 
-static int ucl_allowed_flags = UCL_PARSER_KEY_LOWERCASE |
-	                       UCL_PARSER_NO_TIME       |
-	                       UCL_PARSER_DISABLE_MACRO |
-	                       UCL_PARSER_NO_FILEVARS   ;
+static int ucl_allowed_c_flags = UCL_PARSER_KEY_LOWERCASE |
+	                         UCL_PARSER_NO_TIME       |
+	                         UCL_PARSER_DISABLE_MACRO |
+                                 UCL_PARSER_NO_FILEVARS   ;
+
 
 
 VALUE
-_iterate_valid_ucl(ucl_object_t const *root, int flags)
+_iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
 {
-    const ucl_object_t *obj;
-    ucl_object_iter_t it    = NULL;
-    const ucl_object_t *cur;
-    ucl_object_iter_t it_obj = NULL;
+    ucl_object_iter_t   it  = ucl_object_iterate_new(NULL);
+    const ucl_object_t *obj = NULL;
 
-    VALUE lst = rb_ary_new();
-    
-    while ((obj = ucl_iterate_object (root, &it, false))) {
-	VALUE val;
+    VALUE val;
 
-	switch (obj->type) {
-	case UCL_INT:
-	    val = rb_ll2inum((long long)ucl_object_toint(obj));
-	    break;
-	    
-	case UCL_FLOAT:
-	    val = rb_float_new(ucl_object_todouble(obj));
-	    break;
-	    
-	case UCL_STRING:
-	    val = rb_str_new_cstr(ucl_object_tostring(obj));
-	    break;
-	    
-	case UCL_BOOLEAN:
-	    val = ucl_object_toboolean(obj) ? Qtrue : Qfalse;
-	    break;
-	    
-	case UCL_TIME:
-	    val = rb_float_new(ucl_object_todouble(obj));
-	    break;
-	    
-	case UCL_OBJECT:
-	    it_obj = NULL;
-	    val    = rb_hash_new();		
-	    while ((cur = ucl_iterate_object(obj, &it_obj, true))) {
-		const char *obj_key = ucl_object_key(cur);
-		VALUE key = (flags & UCL_PARSER_KEY_SYMBOL)
-		          ? rb_id2sym(rb_intern(obj_key))
-		          : rb_str_new_cstr(obj_key);
-		rb_hash_aset(val, key, _iterate_valid_ucl(cur, flags));
-	    }
-	    break;
-	    
-	case UCL_ARRAY:
-	    it_obj = NULL;		
-	    val    = rb_ary_new();
-	    while ((cur = ucl_iterate_object (obj, &it_obj, true))) {
-		rb_ary_push(val, _iterate_valid_ucl(cur, flags));
-	    }
-	    break;
-
-	case UCL_USERDATA:
-	    val = rb_str_new(obj->value.sv, obj->len);
-	    break;
-	    
-	case UCL_NULL:
-	    val = Qnil;
-	    break;
-
-	default:
-	    rb_bug("unhandled type (%d)", obj->type);
-    
+    switch (root->type) {
+    case UCL_INT:
+	val = rb_ll2inum((long long)ucl_object_toint(root));
+	break;
+	
+    case UCL_FLOAT:
+	val = rb_float_new(ucl_object_todouble(root));
+	break;
+	
+    case UCL_STRING: {
+	size_t len;
+	const char *str = ucl_object_tolstring(root, &len);
+	val = rb_str_new(str, len);
+	break;
+    }
+	
+    case UCL_BOOLEAN:
+	val = ucl_object_toboolean(root) ? Qtrue : Qfalse;
+	break;
+	
+    case UCL_TIME:
+	val = rb_float_new(ucl_object_todouble(root));
+	break;
+	
+    case UCL_OBJECT:
+	val = rb_hash_new();
+	it  = ucl_object_iterate_reset(it, root);
+	while ((obj = ucl_object_iterate_safe(it, !true))) {
+	    size_t keylen;
+	    const char *key = ucl_object_keyl(obj, &keylen);
+	    VALUE v_key = rb_str_new(key, keylen);
+	    if (flags & UCL_PARSER_KEY_SYMBOL)
+		v_key = rb_to_symbol(v_key);
+	    rb_hash_aset(val, v_key, _iterate_valid_ucl(obj, flags, failed));
 	}
-	rb_ary_push(lst, val);
-
+	*failed = ucl_object_iter_chk_excpn(it);
+	break;
+	
+    case UCL_ARRAY:
+	val = rb_ary_new();
+	it = ucl_object_iterate_reset(it, root);
+	while ((obj = ucl_object_iterate_safe(it, !true))) {
+	    rb_ary_push(val, _iterate_valid_ucl(obj, flags, failed));
+	}
+	*failed = ucl_object_iter_chk_excpn(it);
+	break;
+	
+    case UCL_USERDATA:
+	val = rb_str_new(root->value.sv, root->len);
+	break;
+	
+    case UCL_NULL:
+	val = Qnil;
+	break;
+	
+    default:
+	rb_bug("unhandled type (%d)", root->type);
+	
     }
 
-    switch(RARRAY_LENINT(lst)) {
-    case  0: return Qnil;
-    case  1: return RARRAY_PTR(lst)[0];
-    default: return lst;
-    }
+    ucl_object_iterate_free(it);
+    return val;
 }
 
 static VALUE
@@ -142,7 +138,7 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
     rb_check_type(data,  T_STRING);
     rb_check_type(flags, T_FIXNUM);
 	
-    int c_flags = FIX2INT(flags) & ucl_allowed_flags;
+    int c_flags = FIX2INT(flags) & ucl_allowed_c_flags;
 
     struct ucl_parser *parser =
 	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
@@ -157,12 +153,17 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 	rb_raise(eUCLError, "%s", errormsg);
     }
 
-    ucl_object_t *root = ucl_parser_get_object(parser);
-    VALUE         res  = _iterate_valid_ucl(root, FIX2INT(flags));
+    bool          failed = false;
+    ucl_object_t *root   = ucl_parser_get_object(parser);
+    VALUE         res    = _iterate_valid_ucl(root, FIX2INT(flags), &failed);
 
     if (parser != NULL) { ucl_parser_free(parser); }
     if (root   != NULL) { ucl_object_unref(root);  }
-    
+
+    if (failed) {
+    	rb_raise(eUCLError, "failed to iterate over ucl object");
+    }
+
     return res;
 }
 
@@ -188,25 +189,32 @@ ucl_s_load_file(int argc, VALUE *argv, VALUE klass)
     rb_check_type(file,  T_STRING);
     rb_check_type(flags, T_FIXNUM);
 	
-    int   c_flags = FIX2INT(flags) & ucl_allowed_flags;
+    int   c_flags = FIX2INT(flags) & ucl_allowed_c_flags;
     char *c_file  = StringValueCStr(file);
-    
+
     struct ucl_parser *parser =
 	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
+
     ucl_parser_add_file(parser, c_file);
-    
+    ucl_parser_set_filevars(parser, c_file, false);
+	
     if (ucl_parser_get_error(parser)) {
 	const char *errormsg = ucl_parser_get_error(parser);
 	if (parser != NULL) { ucl_parser_free(parser); }
 	rb_raise(eUCLError, "%s", errormsg);
     }
 
-    ucl_object_t *root = ucl_parser_get_object(parser);
-    VALUE         res  = _iterate_valid_ucl(root, FIX2INT(flags));
+    bool          failed = false;
+    ucl_object_t *root   = ucl_parser_get_object(parser);
+    VALUE         res    = _iterate_valid_ucl(root, FIX2INT(flags), &failed);
 
     if (parser != NULL) { ucl_parser_free(parser); }
     if (root   != NULL) { ucl_object_unref(root);  }
     
+    if (failed) {
+    	rb_raise(eUCLError, "failed to iterate over ucl object");
+    }
+
     return res;
 }
 
