@@ -41,7 +41,7 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags)
 
     VALUE lst = rb_ary_new();
     
-    while ((obj = ucl_object_iterate (root, &it, false))) {
+    while ((obj = ucl_iterate_object (root, &it, false))) {
 	VALUE val;
 
 	switch (obj->type) {
@@ -68,7 +68,7 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags)
 	case UCL_OBJECT:
 	    it_obj = NULL;
 	    val    = rb_hash_new();		
-	    while ((cur = ucl_object_iterate(obj, &it_obj, true))) {
+	    while ((cur = ucl_iterate_object(obj, &it_obj, true))) {
 		const char *obj_key = ucl_object_key(cur);
 		VALUE key = (flags & UCL_PARSER_KEY_SYMBOL)
 		          ? rb_id2sym(rb_intern(obj_key))
@@ -80,7 +80,7 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags)
 	case UCL_ARRAY:
 	    it_obj = NULL;		
 	    val    = rb_ary_new();
-	    while ((cur = ucl_object_iterate (obj, &it_obj, true))) {
+	    while ((cur = ucl_iterate_object (obj, &it_obj, true))) {
 		rb_ary_push(val, _iterate_valid_ucl(cur, flags));
 	    }
 	    break;
