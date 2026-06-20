@@ -12,6 +12,13 @@ rescue LoadError
 end
 
 require 'rake/testtask'
+require 'rake/clean'
+
+# Intermediate build products (removed by `rake clean`).
+CLEAN.include('ext/Makefile', 'ext/*.o', 'ext/mkmf.log',
+              'ext/.*.time', 'ext/ports', 'ext/tmp', '.yardoc')
+# Final build products (removed, with the above, by `rake clobber`).
+CLOBBER.include('ext/*.so', 'doc')
 
 desc "Compile the C extension into ext/"
 task :compile do
