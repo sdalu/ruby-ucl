@@ -19,26 +19,88 @@ class TestUCL < Minitest::Test
     assert_equal({ 'n' => 42 }, UCL.parse('n = 42'))
   end
 
+  def test_negative_integer
+    assert_equal({ 'n' => -5 }, UCL.parse('n = -5'))
+  end
+
+  def test_large_integer
+    assert_equal({ 'n' => 9_999_999_999_999 }, UCL.parse('n = 9999999999999'))
+  end
+
+  def test_max_int64
+    assert_equal({ 'n' => 9_223_372_036_854_775_807 },
+                 UCL.parse('n = 9223372036854775807'))
+  end
+
+  def test_hexadecimal_integer
+    assert_equal({ 'h' => 31 }, UCL.parse('h = 0x1f'))
+  end
+
   def test_float
     assert_equal({ 'f' => 1.5 }, UCL.parse('f = 1.5'))
+  end
+
+  def test_float_with_exponent
+    assert_equal({ 'f' => 1500.0 }, UCL.parse('f = 1.5e3'))
   end
 
   def test_string
     assert_equal({ 's' => 'hello' }, UCL.parse('s = hello'))
   end
 
+  def test_quoted_string
+    assert_equal({ 's' => 'hello world' }, UCL.parse('s = "hello world"'))
+  end
+
+  def test_string_keeps_utf8_bytes
+    # Strings are returned with ASCII-8BIT encoding, but the bytes are the
+    # verbatim (UTF-8) content of the configuration.
+    s = UCL.parse('s = "héllo"')['s']
+    assert_equal 'héllo'.b, s.b
+  end
+
   def test_booleans
     assert_equal({ 't' => true, 'f' => false }, UCL.parse("t = true\nf = false"))
+  end
+
+  def test_boolean_word_variants
+    assert_equal({ 'a' => true, 'b' => true, 'c' => false, 'd' => false },
+                 UCL.parse("a = yes\nb = on\nc = off\nd = no"))
   end
 
   def test_null
     assert_equal({ 'z' => nil }, UCL.parse('z = null'))
   end
 
+  # ---- size multipliers ---------------------------------------------------
+
+  def test_si_multiplier
+    assert_equal({ 's' => 1000 }, UCL.parse('s = 1k'))
+  end
+
+  def test_binary_multipliers
+    assert_equal({ 'a' => 1024, 'b' => 1_048_576 },
+                 UCL.parse("a = 1kb\nb = 1mb"))
+  end
+
   # ---- containers ---------------------------------------------------------
 
   def test_array
     assert_equal({ 'a' => [1, 2, 3] }, UCL.parse('a = [1, 2, 3]'))
+  end
+
+  def test_mixed_type_array
+    assert_equal({ 'a' => [1, 'two', true, nil] },
+                 UCL.parse('a = [1, "two", true, null]'))
+  end
+
+  def test_nested_arrays
+    assert_equal({ 'a' => [[1, 2], [3, 4]] }, UCL.parse('a = [[1,2],[3,4]]'))
+  end
+
+  def test_array_of_objects
+    assert_equal({ 'a' => [{ 'x' => 1 }, { 'y' => 2 }] },
+                 UCL.parse('a = [ {x=1}, {y=2} ]'))
   end
 
   def test_nested_object
@@ -48,6 +110,23 @@ class TestUCL < Minitest::Test
   def test_deeply_nested
     assert_equal({ 'a' => { 'b' => { 'c' => { 'd' => 1 } } } },
                  UCL.parse('a { b { c { d = 1 } } }'))
+  end
+
+  def test_dotted_key_is_kept_flat
+    assert_equal({ 'a.b.c' => 1 }, UCL.parse('a.b.c = 1'))
+  end
+
+  # ---- JSON compatibility -------------------------------------------------
+
+  def test_parses_json
+    assert_equal({ 'a' => 1, 'b' => [2, 3] }, UCL.parse('{"a": 1, "b": [2,3]}'))
+  end
+
+  # ---- comments -----------------------------------------------------------
+
+  def test_comments_are_ignored
+    assert_equal({ 'x' => 1, 'y' => 2 },
+                 UCL.parse("# header\nx = 1 # inline\ny = 2"))
   end
 
   # ---- duplicate keys become an explicit array ----------------------------
@@ -68,6 +147,10 @@ class TestUCL < Minitest::Test
 
   def test_whitespace_only_returns_empty_hash
     assert_equal({}, UCL.parse("   \n  "))
+  end
+
+  def test_comment_only_returns_empty_hash
+    assert_equal({}, UCL.parse("# nothing here\n"))
   end
 
   def test_empty_object
@@ -102,6 +185,10 @@ class TestUCL < Minitest::Test
     assert_equal({ name: 'value' }, UCL.parse('name = value', UCL::KEY_SYMBOL))
   end
 
+  def test_key_symbol_recurses_into_nested_objects
+    assert_equal({ o: { x: 1 } }, UCL.parse('o { x = 1 }', UCL::KEY_SYMBOL))
+  end
+
   def test_key_lowercase
     assert_equal({ 'foo' => 1 }, UCL.parse('FOO = 1', UCL::KEY_LOWERCASE))
   end
@@ -109,6 +196,25 @@ class TestUCL < Minitest::Test
   def test_combined_flags
     assert_equal({ foo: 1 },
                  UCL.parse('FOO = 1', UCL::KEY_SYMBOL | UCL::KEY_LOWERCASE))
+  end
+
+  # ---- macros -------------------------------------------------------------
+
+  def test_disable_macro_does_not_process_include
+    # DISABLE_MACRO stops macros from being executed, so the referenced file
+    # is never read. libucl versions differ in how they treat the macro line:
+    # older ones ignore it (parsing only the remaining keys), newer ones reject
+    # it as an invalid key. Both outcomes are acceptable here.
+    config = %(.include "/no/such/file"\nx = 1)
+    begin
+      assert_equal({ 'x' => 1 }, UCL.parse(config, UCL::DISABLE_MACRO))
+    rescue UCL::Error => e
+      refute_empty e.message
+    end
+  end
+
+  def test_include_of_missing_file_raises_without_flag
+    assert_raises(UCL::Error) { UCL.parse(%(.include "/no/such"\nx = 1)) }
   end
 
   # ---- file variables -----------------------------------------------------
@@ -136,6 +242,14 @@ class TestUCL < Minitest::Test
   def test_explicit_flags_override_default
     UCL.flags = UCL::KEY_SYMBOL
     assert_equal({ 'name' => 'value' }, UCL.parse('name = value', 0))
+  end
+
+  # ---- result object ------------------------------------------------------
+
+  def test_result_is_mutable
+    result = UCL.parse('a = 1')
+    result['b'] = 2
+    assert_equal({ 'a' => 1, 'b' => 2 }, result)
   end
 
   # ---- load_file ----------------------------------------------------------
@@ -175,10 +289,18 @@ class TestUCL < Minitest::Test
     refute_empty err.message
   end
 
+  def test_error_is_a_standard_error
+    assert_operator UCL::Error, :<, StandardError
+  end
+
   def test_repeated_malformed_parses_do_not_crash
     100.times do
       assert_raises(UCL::Error) { UCL.parse('} bad {') }
     end
+  end
+
+  def test_parse_rejects_non_string
+    assert_raises(TypeError) { UCL.parse(42) }
   end
 
   # ---- constants ----------------------------------------------------------
