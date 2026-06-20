@@ -72,13 +72,13 @@ static int ucl_allowed_c_flags = UCL_PARSER_KEY_LOWERCASE |
 
 
 
-VALUE
+static VALUE
 _iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
 {
-    ucl_object_iter_t   it  = ucl_object_iterate_new(NULL);
+    ucl_object_iter_t   it  = NULL;   /* only allocated for objects/arrays */
     const ucl_object_t *obj = NULL;
 
-    VALUE val;
+    VALUE val = Qnil;
 
     switch (root->type) {
     case UCL_INT:
@@ -104,10 +104,12 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
 	val = rb_float_new(ucl_object_todouble(root));
 	break;
 	
-    case UCL_OBJECT:
+    case UCL_OBJECT: {
+	bool iterated = false;
 	val = rb_hash_new();
-	it  = ucl_object_iterate_reset(it, root);
+	it  = ucl_object_iterate_new(root);
 	while ((obj = ucl_object_iterate_safe(it, !true))) {
+	    iterated = true;
 	    size_t keylen;
 	    const char *key = ucl_object_keyl(obj, &keylen);
 	    VALUE v_key = rb_str_new(key, keylen);
@@ -115,17 +117,25 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
 		v_key = rb_to_symbol(v_key);
 	    rb_hash_aset(val, v_key, _iterate_valid_ucl(obj, flags, failed));
 	}
-	*failed = ucl_object_iter_chk_excpn(it);
+	/* An empty object has a NULL hash that the safe iterator reports as an
+	 * exception (EINVAL); ignore that and only flag a genuine error that
+	 * occurs while iterating. Accumulate so a nested failure deeper in the
+	 * tree is never cleared by a successful parent iteration. */
+	if (iterated && ucl_object_iter_chk_excpn(it)) *failed = true;
 	break;
-	
-    case UCL_ARRAY:
+    }
+
+    case UCL_ARRAY: {
+	bool iterated = false;
 	val = rb_ary_new();
-	it = ucl_object_iterate_reset(it, root);
+	it = ucl_object_iterate_new(root);
 	while ((obj = ucl_object_iterate_safe(it, !true))) {
+	    iterated = true;
 	    rb_ary_push(val, _iterate_valid_ucl(obj, flags, failed));
 	}
-	*failed = ucl_object_iter_chk_excpn(it);
+	if (iterated && ucl_object_iter_chk_excpn(it)) *failed = true;
 	break;
+    }
 	
     case UCL_USERDATA:
 	val = rb_str_new(root->value.sv, root->len);
@@ -136,11 +146,11 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
 	break;
 	
     default:
-	rb_bug("unhandled type (%d)", root->type);
-	
+	rb_raise(eUCLError, "unhandled UCL type (%d)", root->type);
+
     }
 
-    ucl_object_iterate_free(it);
+    if (it != NULL) ucl_object_iterate_free(it);
     return val;
 }
 
@@ -206,23 +216,27 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 
     struct ucl_parser *parser =
 	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
+    if (parser == NULL)
+	rb_raise(eUCLError, "failed to allocate UCL parser");
 
     ucl_parser_add_chunk(parser,
 			 (unsigned char *)RSTRING_PTR(data),
 			 RSTRING_LEN(data));
-    
+
     if (ucl_parser_get_error(parser)) {
-	const char *errormsg = ucl_parser_get_error(parser);
-	if (parser != NULL) { ucl_parser_free(parser); }
-	rb_raise(eUCLError, "%s", errormsg);
+	/* Copy the message into the exception before freeing the parser:
+	 * ucl_parser_get_error() points into memory owned by the parser. */
+	VALUE err = rb_exc_new2(eUCLError, ucl_parser_get_error(parser));
+	ucl_parser_free(parser);
+	rb_exc_raise(err);
     }
 
     bool          failed = false;
     ucl_object_t *root   = ucl_parser_get_object(parser);
     VALUE         res    = _iterate_valid_ucl(root, FIX2INT(flags), &failed);
 
-    if (parser != NULL) { ucl_parser_free(parser); }
-    if (root   != NULL) { ucl_object_unref(root);  }
+    ucl_parser_free(parser);
+    if (root != NULL) { ucl_object_unref(root); }
 
     if (failed) {
     	rb_raise(eUCLError, "failed to iterate over ucl object");
@@ -265,23 +279,27 @@ ucl_s_load_file(int argc, VALUE *argv, VALUE klass)
 
     struct ucl_parser *parser =
 	ucl_parser_new(c_flags | UCL_PARSER_NO_IMPLICIT_ARRAYS);
+    if (parser == NULL)
+	rb_raise(eUCLError, "failed to allocate UCL parser");
 
     ucl_parser_add_file(parser, c_file);
     ucl_parser_set_filevars(parser, c_file, false);
-	
+
     if (ucl_parser_get_error(parser)) {
-	const char *errormsg = ucl_parser_get_error(parser);
-	if (parser != NULL) { ucl_parser_free(parser); }
-	rb_raise(eUCLError, "%s", errormsg);
+	/* Copy the message into the exception before freeing the parser:
+	 * ucl_parser_get_error() points into memory owned by the parser. */
+	VALUE err = rb_exc_new2(eUCLError, ucl_parser_get_error(parser));
+	ucl_parser_free(parser);
+	rb_exc_raise(err);
     }
 
     bool          failed = false;
     ucl_object_t *root   = ucl_parser_get_object(parser);
     VALUE         res    = _iterate_valid_ucl(root, FIX2INT(flags), &failed);
 
-    if (parser != NULL) { ucl_parser_free(parser); }
-    if (root   != NULL) { ucl_object_unref(root);  }
-    
+    ucl_parser_free(parser);
+    if (root != NULL) { ucl_object_unref(root); }
+
     if (failed) {
     	rb_raise(eUCLError, "failed to iterate over ucl object");
     }
