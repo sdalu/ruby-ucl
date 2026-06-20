@@ -1,12 +1,12 @@
 Gem::Specification.new do |s|
     s.name        = 'ucl'
     s.version     = '0.1.3.2'
-    s.summary     = " Universal configuration library parser"
+    s.summary     = 'Universal Configuration Language (UCL) parser'
     s.description =  <<~EOF
-      
-      Read configuration file in UCL format (binding to the libucl).
-
-      EOF
+      Parse configuration files written in the Universal Configuration
+      Language (UCL), a human-friendly JSON superset. Native bindings to
+      the libucl library; results are returned as plain Ruby objects.
+    EOF
 
     s.homepage    = 'https://github.com/sdalu/ruby-ucl'
     s.license     = 'MIT'

@@ -11,13 +11,51 @@
 /**
  * Document-class: UCL
  *
- * UCL configuration file.
+ * Parser for configuration files written in the Universal Configuration
+ * Language (UCL), a JSON-superset format handled by the libucl library.
+ *
+ * Parsed configurations are returned as plain Ruby objects (Hash, Array,
+ * String, Integer, Float, true/false, nil).
+ *
+ * @example Parse a string
+ *   UCL.parse('name = value')        #=> { "name" => "value" }
+ *
+ * @example Load a file with symbol keys
+ *   UCL.load_file('foo.conf', UCL::KEY_SYMBOL)
+ *
+ * @see https://github.com/vstakhov/libucl
  */
 
 /**
  * Document-class: UCL::Error
  *
- * Generic error raised by UCL.
+ * Raised when a configuration cannot be parsed, or when the parsed tree
+ * cannot be converted to Ruby objects.
+ */
+
+/**
+ * Document-const: KEY_LOWERCASE
+ * Flag: convert all object keys to lower case.
+ */
+
+/**
+ * Document-const: NO_TIME
+ * Flag: do not parse time values; keep them as strings.
+ */
+
+/**
+ * Document-const: DISABLE_MACRO
+ * Flag: disable processing of macros (e.g. <code>.include</code>).
+ */
+
+/**
+ * Document-const: NO_FILEVARS
+ * Flag: do not define the file-related variables when loading a file.
+ */
+
+/**
+ * Document-const: KEY_SYMBOL
+ * Flag: return object keys as Symbol instead of String.
  */
 
 
@@ -104,6 +142,12 @@ _iterate_valid_ucl(ucl_object_t const *root, int flags, bool *failed)
     return val;
 }
 
+/**
+ * Default flags applied by {UCL.parse} and {UCL.load_file} when none are
+ * given explicitly.
+ *
+ * @return [Integer] the current default flags (0 by default)
+ */
 static VALUE
 ucl_s_get_flags(VALUE klass)
 {
@@ -111,6 +155,17 @@ ucl_s_get_flags(VALUE klass)
 }
 
 
+/**
+ * Set the default flags applied by {UCL.parse} and {UCL.load_file} when
+ * none are given explicitly.
+ *
+ * @param val [Integer] flags, combined with a bitwise OR
+ *
+ * @example
+ *   UCL.flags = UCL::KEY_SYMBOL | UCL::KEY_LOWERCASE
+ *
+ * @return [Integer] the flags that were set
+ */
 static VALUE
 ucl_s_set_flags(VALUE klass, VALUE val)
 {
@@ -121,12 +176,19 @@ ucl_s_set_flags(VALUE klass, VALUE val)
 
 
 /**
- * Parse a configuration file
+ * Parse a UCL configuration from a string.
  *
- * @param data [String]
- * @param flags [Integer]
+ * @param data  [String]  the UCL configuration to parse
+ * @param flags [Integer] parsing flags combined with a bitwise OR;
+ *   defaults to {UCL.flags} when omitted
  *
- * @return configuration file as ruby objects.
+ * @example
+ *   UCL.parse('name = value')            #=> { "name" => "value" }
+ *   UCL.parse('name = value', UCL::KEY_SYMBOL)  #=> { :name => "value" }
+ *
+ * @raise [UCL::Error] if the configuration is malformed
+ *
+ * @return [Hash, Array, Object] the configuration as Ruby objects
  */
 static VALUE
 ucl_s_parse(int argc, VALUE *argv, VALUE klass)
@@ -169,15 +231,22 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 
 
 /**
- * Load configuration file
+ * Load and parse a UCL configuration from a file.
  *
- * @param file  [String] 
- * @param flags [Integer]
+ * Unlike {UCL.parse}, this also defines the file-related variables (such
+ * as the file's name and directory) usable from within the configuration,
+ * unless {NO_FILEVARS} is set.
+ *
+ * @param file  [String]  path to the configuration file
+ * @param flags [Integer] parsing flags combined with a bitwise OR;
+ *   defaults to {UCL.flags} when omitted
  *
  * @example
  *   UCL.load_file('foo.conf', UCL::KEY_SYMBOL)
  *
- * @return configuration file as ruby objects.
+ * @raise [UCL::Error] if the file cannot be read or is malformed
+ *
+ * @return [Hash, Array, Object] the configuration as Ruby objects
  */
 static VALUE
 ucl_s_load_file(int argc, VALUE *argv, VALUE klass)
