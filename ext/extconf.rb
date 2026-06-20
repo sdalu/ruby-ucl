@@ -3,8 +3,8 @@ require 'mkmf'
 # Pinned libucl (vstakhov's Universal Configuration Language parser) used
 # when the library has to be built from source. NOTE: this is *not* the
 # Debian `libucl-dev` package, which is an unrelated compression library.
-LIBUCL_VERSION = '0.8.2'
-LIBUCL_SHA256  = 'd95a0e2151cc167a0f3e51864fea4e8977a0f4c473faa805269a347f7fb4e165'
+LIBUCL_VERSION = '0.9.4'
+LIBUCL_SHA256  = '319d8ff13441f55d91cd7f3708a54bd03779733e26958c2346c5109014520aaf'
 
 # Force building libucl from source, ignoring any system installation:
 #   gem install ucl -- --enable-vendor-libucl
