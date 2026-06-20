@@ -16,9 +16,13 @@ Gem::Specification.new do |s|
 
     s.extensions  = [ 'ext/extconf.rb' ]
     s.files       = %w[ ucl.gemspec README.md LICENSE ] +
-                    Dir['ext/**/*.{c,h,rb}']
+                    Dir['ext/**/*.{c,h,rb}'] +
+                    Dir['test/**/*.rb']
 
     # Used at build time to download and compile libucl from source when no
     # system-wide installation is found (requires cmake and a C compiler).
     s.add_dependency 'mini_portile2', '~> 2.8'
+
+    s.add_development_dependency 'rake'
+    s.add_development_dependency 'minitest', '~> 5.0'
 end
