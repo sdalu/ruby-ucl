@@ -50,7 +50,9 @@
 
 /**
  * Document-const: NO_FILEVARS
- * Flag: do not define the file-related variables when loading a file.
+ * Flag: do not predefine the file variables (<code>$FILENAME</code>,
+ * <code>$CURDIR</code>). This affects {UCL.parse}; {UCL.load_file} still
+ * derives those variables from the file being loaded.
  */
 
 /**
@@ -233,9 +235,9 @@ ucl_s_parse(int argc, VALUE *argv, VALUE klass)
 /**
  * Load and parse a UCL configuration from a file.
  *
- * Unlike {UCL.parse}, this also defines the file-related variables (such
- * as the file's name and directory) usable from within the configuration,
- * unless {NO_FILEVARS} is set.
+ * Unlike {UCL.parse}, this defines the file variables ($FILENAME,
+ * $CURDIR) from the loaded file, so they can be referenced from within
+ * the configuration.
  *
  * @param file  [String]  path to the configuration file
  * @param flags [Integer] parsing flags combined with a bitwise OR;

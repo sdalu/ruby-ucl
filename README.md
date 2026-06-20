@@ -21,6 +21,14 @@ The native [libucl][1] library (version 0.8.2 or later) and its headers
 must be installed. By default the extension also looks in `/opt/lib` and
 `/opt/include`.
 
+> **Debian/Ubuntu note:** do **not** `apt install libucl-dev`. That package
+> is an unrelated [UCL *data-compression* library][3] that happens to share
+> the name — it does not provide `ucl_parser_new` and the build will fail.
+> The configuration parser required here is not packaged for Debian; build
+> it from source instead (e.g. `./configure --prefix=/opt && make install`,
+> matching the default search paths above). It is, however, available on
+> Fedora (`libucl`), Homebrew (`libucl`) and FreeBSD ports.
+
 
 Installation
 ------------
@@ -72,7 +80,7 @@ Flags
 | `KEY_LOWERCASE`  | Convert all keys to lower case.                               |
 | `NO_TIME`        | Do not parse time values; keep them as strings.              |
 | `DISABLE_MACRO`  | Disable processing of macros (e.g. `.include`).              |
-| `NO_FILEVARS`    | Do not define the file-related variables when loading a file. |
+| `NO_FILEVARS`    | Do not predefine `$FILENAME` / `$CURDIR` (affects `parse`; `load_file` still sets them from the file). |
 
 
 Type mapping
@@ -89,8 +97,13 @@ Type mapping
 | boolean    | `true` / `false`         |
 | null       | `nil`                    |
 
-Note: implicit arrays are disabled, so a key that appears several times
-keeps only its last value rather than being collected into an array.
+Note: the parser uses explicit (not implicit) arrays, so a key repeated
+several times is collected into an `Array` of its values:
+
+~~~ruby
+UCL.parse("a = 1\na = 2")   #=> { "a" => [1, 2] }
+UCL.parse("a = 1")          #=> { "a" => 1 }
+~~~
 
 
 License
@@ -101,3 +114,4 @@ Released under the MIT License. See [LICENSE](LICENSE).
 
 [1]: https://github.com/vstakhov/libucl
 [2]: https://nginx.org/
+[3]: https://www.oberhumer.com/opensource/ucl/

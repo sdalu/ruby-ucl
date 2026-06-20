@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
     s.name        = 'ucl'
-    s.version     = '0.1.3.2'
+    s.version     = '0.1.4'
     s.summary     = 'Universal Configuration Language (UCL) parser'
     s.description =  <<~EOF
       Parse configuration files written in the Universal Configuration
@@ -15,5 +15,10 @@ Gem::Specification.new do |s|
     s.email       = [ 'sdalu@sdalu.com' ]
 
     s.extensions  = [ 'ext/extconf.rb' ]
-    s.files       = %w[ ucl.gemspec ]  + Dir['ext/**/*.{c,h,rb}']
+    s.files       = %w[ ucl.gemspec README.md LICENSE ] +
+                    Dir['ext/**/*.{c,h,rb}']
+
+    # Used at build time to download and compile libucl from source when no
+    # system-wide installation is found (requires cmake and a C compiler).
+    s.add_dependency 'mini_portile2', '~> 2.8'
 end
