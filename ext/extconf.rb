@@ -1,12 +1,22 @@
 require 'mkmf'
 
-# Pinned libucl (vstakhov's Universal Configuration Language parser) used
-# when the library has to be built from source. NOTE: this is *not* the
-# Debian `libucl-dev` package, which is an unrelated compression library.
-LIBUCL_VERSION = '0.9.4'
-LIBUCL_SHA256  = '319d8ff13441f55d91cd7f3708a54bd03779733e26958c2346c5109014520aaf'
+# Vendored libucl (vstakhov's Universal Configuration Language parser), used
+# when no system-wide installation is found. It lives in ext/libucl, a git
+# submodule pinned to a release tag. NOTE: this is *not* the Debian
+# `libucl-dev` package, which is an unrelated compression library.
+#
+# Its sources are compiled straight into this extension rather than built as a
+# separate library: src/ucl_internal.h defines the HAVE_* macros itself when
+# HAVE_CONFIG_H is absent -- upstream calls this the "embedded build" and ships
+# a Makefile.unix for it -- so no configure step is needed, and with it go the
+# download, cmake, and any question of which libucl the linker picks up.
+#
+# One useful side effect: `.include` over http/ftp is gated on HAVE_FETCH_H and
+# CURL_H, which the embedded build never defines, so remote includes are
+# compiled out. A system-wide libucl may well have them enabled.
+LIBUCL_DIR = File.join(__dir__, 'libucl').freeze
 
-# Force building libucl from source, ignoring any system installation:
+# Force using the bundled copy, ignoring any system installation:
 #   gem install ucl -- --enable-vendor-libucl
 #   bundle config set build.ucl --enable-vendor-libucl
 #   UCL_VENDOR_LIBUCL=1 rake compile
@@ -21,49 +31,41 @@ def system_libucl
     find_library('ucl', 'ucl_parser_new', '/opt/lib',     '/usr/local/lib')
 end
 
+# The submodule is not populated in a fresh clone, and a gem packaged without
+# it would fail here rather than at `git submodule update` time.
+def bundled_libucl
+  File.exist?(File.join(LIBUCL_DIR, 'src', 'ucl_parser.c'))
+end
+
 if !force_vendor && system_libucl
   message "Using system libucl.\n"
 else
-  message "Building libucl #{LIBUCL_VERSION} from source.\n"
-
-  # Building from source needs cmake and a working C compiler.
-  missing = []
-  missing << 'cmake'          unless find_executable('cmake')
-  missing << 'a C compiler'   unless try_compile('int main(void) { return 0; }')
-  unless missing.empty?
-    abort "\nBuilding libucl from source requires #{missing.join(' and ')}, " \
-          "which #{missing.length > 1 ? 'are' : 'is'} not available.\n"      \
-          "Install the missing tool(s), or provide a system-wide libucl.\n"
+  unless bundled_libucl
+    abort "\nThe bundled libucl sources are missing from #{LIBUCL_DIR}.\n"     \
+          "In a git checkout, populate the submodule with:\n"                  \
+          "    git submodule update --init\n"                                  \
+          "In an installed gem this means the gem was packaged without them; " \
+          "please report it.\n"                                                \
+          "Failing that, install libucl system-wide and build again.\n"
   end
 
-  require 'mini_portile2'
+  # Prepended so that a system-wide ucl.h cannot shadow the bundled one.
+  $INCFLAGS = "-I#{LIBUCL_DIR}/include -I#{LIBUCL_DIR}/uthash " \
+              "-I#{LIBUCL_DIR}/src -I#{LIBUCL_DIR}/klib #{$INCFLAGS}"
 
-  recipe = MiniPortileCMake.new('libucl', LIBUCL_VERSION)
-  recipe.files = [{
-    url:    "https://github.com/vstakhov/libucl/archive/refs/tags/#{LIBUCL_VERSION}.tar.gz",
-    sha256: LIBUCL_SHA256,
-  }]
-  # Static, position-independent build with every optional feature disabled.
-  recipe.configure_options += %w[
-    -DCMAKE_BUILD_TYPE=Release
-    -DBUILD_SHARED_LIBS=OFF
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    -DENABLE_URL_INCLUDE=OFF
-    -DENABLE_LUA=OFF
-    -DENABLE_UTILS=OFF
-  ]
-  recipe.cook     # download, verify checksum, cmake build + install into recipe.path
-  recipe.activate
+  # Every .c under src/ -- the same set CMakeLists.txt lists as UCLSRC.
+  $srcs = [File.join(__dir__, 'ucl.c')] +
+          Dir[File.join(LIBUCL_DIR, 'src', '*.c')].sort
+  $objs = $srcs.map { |src| "#{File.basename(src, '.c')}.o" }
+  $VPATH << "$(srcdir)/libucl/src"
 
-  $INCFLAGS << " -I#{recipe.path}/include"
-  $LIBPATH.unshift "#{recipe.path}/lib"
+  # libucl's own build passes both; without them its sources emit a few hundred
+  # warning lines through an unrelated gem's install log.
+  $CFLAGS << ' -Wno-pointer-sign -Wno-unused-parameter'
+
   have_library('m') # libucl relies on the math library
 
-  unless find_header( 'ucl.h',                 "#{recipe.path}/include") &&
-         find_library('ucl', 'ucl_parser_new', "#{recipe.path}/lib")
-    abort "\nlibucl was built but could not be linked " \
-          "(check the static archive name/dir under #{recipe.path}/lib).\n"
-  end
+  message "Compiling the bundled libucl into the extension.\n"
 end
 
 create_makefile('ucl')

@@ -54,3 +54,9 @@ build-iPhoneSimulator/
 
 # Used by RuboCop. Remote config files pulled in from inherit_from directive.
 # .rubocop-https?--*
+
+# Build products of the C extension (ext/*.o now includes the bundled libucl)
+/ext/Makefile
+/ext/mkmf.log
+/ext/*.o
+/ext/*.so

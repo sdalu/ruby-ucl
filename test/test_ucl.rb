@@ -129,6 +129,18 @@ class TestUCL < Minitest::Test
                  UCL.parse("# header\nx = 1 # inline\ny = 2"))
   end
 
+  # Characterisation, not endorsement: in libucl a trailing comment suppresses
+  # suffix parsing, so a value carrying a unit or a multiplier comes back as a
+  # string. Plain numbers are unaffected (see above). The README documents this
+  # as a trap; if a future libucl fixes it, this test is the canary that says
+  # the documentation needs updating.
+  def test_trailing_comment_suppresses_suffix_parsing
+    assert_equal({ 't' => 30.0 },       UCL.parse('t = 30s'))
+    assert_equal({ 't' => '30s' },      UCL.parse('t = 30s # note'))
+    assert_equal({ 'n' => 10_485_760 }, UCL.parse('n = 10mb'))
+    assert_equal({ 'n' => '10mb' },     UCL.parse('n = 10mb # note'))
+  end
+
   # ---- duplicate keys become an explicit array ----------------------------
 
   def test_duplicate_keys_make_array
@@ -303,6 +315,109 @@ class TestUCL < Minitest::Test
     assert_raises(TypeError) { UCL.parse(42) }
   end
 
+  # ---- nesting limit ------------------------------------------------------
+
+  # The conversion to Ruby objects and libucl's own tree handling both recurse
+  # once per nesting level, so the depth is capped instead of being left to
+  # exhaust the C stack. The threads below are what make these meaningful: a
+  # thread gets a 1 MiB machine stack, which is the small stack the limit has
+  # to protect.
+
+  def test_deeply_nested_array_raises_ucl_error
+    err = Thread.new { assert_raises(UCL::Error) { UCL.parse(deep_array) } }.value
+    assert_match(/nesting/, err.message)
+  end
+
+  def test_deeply_nested_object_raises_ucl_error
+    src = ('k {' * 20_000) + ('}' * 20_000)
+    Thread.new { assert_raises(UCL::Error) { UCL.parse(src) } }.join
+  end
+
+  def test_deeply_nested_file_raises_ucl_error
+    with_conf(deep_array) do |path|
+      Thread.new { assert_raises(UCL::Error) { UCL.load_file(path) } }.join
+    end
+  end
+
+  def test_nesting_just_below_the_limit_is_accepted
+    src = 'a = ' + ('[' * 999) + (']' * 999)
+    assert_kind_of Array, UCL.parse(src)['a']
+  end
+
+  def test_parser_still_works_after_a_rejected_document
+    Thread.new { assert_raises(UCL::Error) { UCL.parse(deep_array) } }.join
+    assert_equal({ 'x' => 1 }, UCL.parse('x = 1'))
+  end
+
+  def test_rejected_document_does_not_leak_the_parser
+    # Regression: the conversion used to escape with the parser and the whole
+    # parsed tree still allocated, losing ~2.7 MiB per rejected 40 KiB input.
+    before = process_rss_kib
+    skip 'cannot read RSS on this platform' if before.nil?
+    100.times do
+      UCL.parse(deep_array)
+    rescue UCL::Error
+      # expected; what is being measured is what the failure path leaves behind
+    end
+    GC.start
+    growth = process_rss_kib - before
+    # Pre-fix this grew by ~280 MiB; the margin is deliberately generous so
+    # that ordinary heap growth cannot make the test flaky.
+    assert_operator growth, :<, 20 * 1024,
+                    "leaked #{growth} KiB over 100 rejected documents"
+  end
+
+  # ---- macro safety -------------------------------------------------------
+
+  def test_parse_processes_the_include_macro
+    with_conf("secret = value\n") do |path|
+      assert_equal({ 'secret' => 'value' }, UCL.parse(%(.include "#{path}")))
+    end
+  end
+
+  def test_safe_parse_does_not_read_the_included_file
+    with_conf("secret = value\n") do |path|
+      # libucl versions differ in how they treat a macro line when macros are
+      # disabled (ignored, or rejected as an invalid key); either is fine, as
+      # long as the file is not read.
+      begin
+        refute_includes UCL.safe_parse(%(.include "#{path}")), 'secret'
+      rescue UCL::Error => e
+        refute_empty e.message
+      end
+    end
+  end
+
+  def test_safe_parse_parses_ordinary_input
+    assert_equal({ 'a' => 1, 'b' => [2, 3] }, UCL.safe_parse("a = 1\nb = [2,3]"))
+  end
+
+  def test_safe_parse_honours_explicit_flags
+    assert_equal({ a: 1 },
+                 UCL.safe_parse('A = 1', UCL::KEY_SYMBOL | UCL::KEY_LOWERCASE))
+  end
+
+  def test_safe_parse_uses_the_default_flags
+    UCL.flags = UCL::KEY_SYMBOL
+    assert_equal({ a: 1 }, UCL.safe_parse('a = 1'))
+  end
+
+  # ---- subclasses ---------------------------------------------------------
+
+  def test_subclass_uses_its_own_default_flags
+    klass = Class.new(UCL)
+    klass.flags = UCL::KEY_SYMBOL
+    assert_equal({ 'name' => 'value' }, UCL.parse('name = value'))
+    assert_equal({ name: 'value' },     klass.parse('name = value'))
+  end
+
+  def test_subclass_without_flags_falls_back_to_ucl
+    UCL.flags = UCL::KEY_SYMBOL
+    klass = Class.new(UCL)
+    assert_equal UCL::KEY_SYMBOL,   klass.flags
+    assert_equal({ name: 'value' }, klass.parse('name = value'))
+  end
+
   # ---- constants ----------------------------------------------------------
 
   def test_constants_defined
@@ -312,6 +427,20 @@ class TestUCL < Minitest::Test
   end
 
   private
+
+  # 20 000 levels: deeper than the 1000-level limit, and deep enough that the
+  # C stack would be gone without it.
+  def deep_array
+    'a = ' + ('[' * 20_000) + (']' * 20_000)
+  end
+
+  # Resident set size in KiB, or nil where it cannot be read.
+  def process_rss_kib
+    out = `ps -o rss= -p #{$$} 2>/dev/null`
+    $?.success? && !out.strip.empty? ? out.to_i : nil
+  rescue StandardError
+    nil
+  end
 
   def with_conf(content)
     Tempfile.create(['ucl', '.conf']) do |f|
