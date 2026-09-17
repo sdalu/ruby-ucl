@@ -27,6 +27,19 @@ Or add it to your `Gemfile`:
 gem 'ucl'
 ~~~
 
+To track this repository instead of a released gem, **`submodules: true` is
+required**:
+
+~~~ruby
+gem 'ucl', github: 'sdalu/ruby-ucl', submodules: true
+~~~
+
+libucl is vendored as a git submodule (see below), and Bundler does not fetch
+submodules unless asked. Without that option `ext/libucl` stays empty and the
+build fails — except on a machine that happens to have a system-wide libucl,
+where it quietly links against that instead, and only fails once it is
+deployed somewhere that has none.
+
 The extension binds to the native [libucl][1] library. At build time it is
 resolved as follows:
 
